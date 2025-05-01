@@ -1334,7 +1334,7 @@ def calculate_dynamic_risk_score(ticker: str, df_history: pd.DataFrame, info: di
         normalized_weights = {k: v / weight_sum for k, v in valid_weights_mapping.items()}
         final_score = sum(score * normalized_weights[factor] for factor, score in valid_scores.items())
         final_score = np.clip(final_score, 0, 100)  # Ensure score is between 0 and 100
-        final_score = min(final_score + 20.0, 100.0)  # Add 20 points, cap at 100
+        final_score = min(final_score + 35.0, 100.0)  # Add 20 points, cap at 100
         logging.info(f"Simplified Risk score for {ticker} calculated: {final_score:.2f} (using {len(valid_scores)}/{len(simplified_factors)} factors)")
     else:
         logging.warning(f"[{ticker}] No valid factors calculated or total effective weight is zero. Cannot calculate risk score.")
@@ -2297,7 +2297,7 @@ if user_input_triggered:
 st.divider() # Divider before the donation link
 
 # --- Start of Donation Section ---
-st.caption("Like this tool? Consider supporting its development: [☕ Buy me a coffee (PayPal.me)](https://paypal.me/niveyal) (Optional, but appreciated!)")
+st.markdown('<p style="font-size: 16px; font-weight: bold; text-align: center;">Like this tool? Consider supporting its development: <a href="https://paypal.me/niveyal">☕ Buy me a coffee (PayPal.me)</a> (Optional, but appreciated!)</p>', unsafe_allow_html=True)
 # --- End of Donation Section ---
 
 st.divider() # Divider between donation and disclaimer
