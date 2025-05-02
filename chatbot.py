@@ -24,6 +24,7 @@ from collections import Counter
 import sys
 import warnings
 
+import openai  # ✅ MAKE SURE THIS LINE IS PRESENT!
 
 # --- Data Science & Math ---
 import pandas as pd
