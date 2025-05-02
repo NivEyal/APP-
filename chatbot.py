@@ -1518,81 +1518,385 @@ def map_recommendation_key_to_english(key):
     return mapping.get(str(key).lower(), str(key).capitalize() if key else "Not Available")
 
 # [Wikipedia Index Lookup functions remain the same]
+# ... (previous imports and code remain unchanged) ...
+
 def build_sp500_ticker_map(cache_duration_hours=24, force_refresh=False):
     """Builds or loads a mapping of S&P 500 company names to tickers from Wikipedia."""
-    cache_file = "sp500_data.pkl"; ticker_map = None; loaded_from_cache = False
+    cache_file = "sp500_data.pkl"
+    ticker_map = None
+    loaded_from_cache = False
     logging.info(f"Checking S&P 500 cache (file: {cache_file}, force_refresh={force_refresh}).")
     if not force_refresh and os.path.exists(cache_file):
-        try: cache_data = pd.read_pickle(cache_file); last_fetch_time = cache_data.get('timestamp', 0)
-        except Exception as e: logging.warning(f"S&P 500 cache read error: {e}."); last_fetch_time = 0
-        if (time.time() - last_fetch_time) / 3600 < cache_duration_hours: logging.info("Using cached S&P 500 data."); ticker_map = cache_data.get('ticker_map'); loaded_from_cache = bool(ticker_map)
-        else: logging.info("S&P 500 cache expired.")
-    if ticker_map is None:
-        logging.info("Fetching fresh S&P 500 data."); url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (compatible; FinancialBot/1.0; +http://example.com/bot)'}; response = requests.get(url, headers=headers, timeout=15); response.raise_for_status(); sp500_table = None
-            try:
-                html_content = io.StringIO(response.text); tables = pd.read_html(html_content, flavor='lxml')
-                # Try common table index 0 first, then search if needed
-                if len(tables) > 0 and 'Symbol' in tables[0].columns and 'Security' in tables[0].columns:
-                     sp500_table = tables[0]; logging.info("Using default table 0 for S&P 500.")
-                else:
-                     logging.warning("Default S%26P 500 table structure not found. Auto-finding...") # Corrected typo
-                     found_table = False
-                     for i, df in enumerate(tables):
-                          cols_lower = {str(col).lower() for col in df.columns}
-                          has_ticker = any(t in cols_lower for t in ['ticker', 'symbol'])
-                          has_name = any(n in cols_lower for n in ['security', 'company', 'name'])
-                          # Look for a table with a Symbol/Ticker column and a Security/Company/Name column, and a reasonable number of rows (~500)
-                          if has_ticker and has_name and len(df) > 400:
-                              sp500_table = df
-                              logging.info(f"Found S%26P 500 table at index {i}.") # Corrected typo
-                              found_table = True
-                              break
-                     if not found_table: raise IndexError("Could not find S%26P 500 table.") # Corrected typo
-            except Exception as e: logging.error(f"Error reading S%26P 500 HTML: {e}."); return None # Corrected typo
-            ticker_col, name_col = None, None; possible_ticker_cols = ['Symbol', 'Ticker']; possible_name_cols = ['Security', 'Company', 'Name']
-            for col in sp500_table.columns:
-                 col_str = str(col)
-                 if col_str in possible_ticker_cols and ticker_col is None: ticker_col = col_str
-                 if col_str in possible_name_cols and name_col is None: name_col = col_str
-            if not ticker_col or not name_col: logging.error(f"Could not find S%26P 500 columns (looked for {possible_ticker_cols} and {possible_name_cols}). Found: {sp500_table.columns.tolist()}"); return None # Corrected typo
-
+            cache_data = pd.read_pickle(cache_file)
+            last_fetch_time = cache_data.get('timestamp', 0)
+        except Exception as e:
+            logging.warning(f"S&P 500 cache read error: {e}.")
+            last_fetch_time = 0
+        if (time.time() - last_fetch_time) / 3600 < cache_duration_hours:
+            logging.info("Using cached S&P 500 data.")
+            ticker_map = cache_data.get('ticker_map')
+            loaded_from_cache = bool(ticker_map)
+        else:
+            logging.info("S&P 500 cache expired.")
+    if ticker_map is None:
+        logging.info("Fetching fresh S&P 500 data.")
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (compatible; FinancialBot/1.0; +http://example.com/bot)'}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            html_content = io.StringIO(response.text)
+            tables = pd.read_html(html_content, flavor='lxml')
+            sp500_table = tables[0]
+            ticker_col = 'Symbol'
+            name_col = 'Security'
             scraped_ticker_map = {}
             for _, row in sp500_table.iterrows():
-                 ticker_val, name_val = row.get(ticker_col), row.get(name_col)
-                 if isinstance(ticker_val, str) and isinstance(name_val, str) and ticker_val.strip() and name_val.strip():
-                    ticker_clean = ticker_val.strip().replace('.', '-'); # Handle common variations like BRK.B -> BRK-B
-                    name_lower = name_val.strip().lower();
-                    # Clean common corporate suffixes and punctuation from company names for better matching
+                ticker_val, name_val = row.get(ticker_col), row.get(name_col)
+                if isinstance(ticker_val, str) and isinstance(name_val, str) and ticker_val.strip() and name_val.strip():
+                    ticker_clean = ticker_val.strip().replace('.', '-')
+                    name_lower = name_val.strip().lower()
                     name_cleaned = re.sub(r'\s+(inc|incorporated|corp|corporation|ltd|plc|co)\.?\b|\.$|,', '', name_lower, flags=re.IGNORECASE).strip()
-                    scraped_ticker_map[name_lower] = ticker_clean # Store original lower name
+                    scraped_ticker_map[name_lower] = ticker_clean
                     if name_cleaned != name_lower and name_cleaned not in scraped_ticker_map:
-                        scraped_ticker_map[name_cleaned] = ticker_clean # Store cleaned name if different
-            ticker_map = scraped_ticker_map; logging.info(f"Scraped {len(ticker_map)} S%26P 500 entries.") # Corrected typo
-        except requests.exceptions.RequestException as e: logging.error(f"FATAL: Error fetching S%26P 500 URL '{url}': {e}"); return None # Corrected typo
-        except Exception as e: logging.error(f"FATAL: Unexpected error during S%26P 500 fetch: {e}", exc_info=True); return None # Corrected typo
-
+                        scraped_ticker_map[name_cleaned] = ticker_clean
+            ticker_map = scraped_ticker_map
+            logging.info(f"Scraped {len(ticker_map)} S&P 500 entries.")
+        except Exception as e:
+            logging.error(f"Error fetching S&P 500 data: {e}")
+            return None
     if ticker_map is not None:
-        # Add specific overrides for common name variations not caught by cleaning
-        overrides = { "google": "GOOGL", "alphabet": "GOOGL", "alphabet class c": "GOOG", "alphabet inc.": "GOOGL",
-                      "meta": "META", "facebook": "META", "meta platforms": "META", "fb": "META", # Add fb
-                      "amazon": "AMZN", "amazon.com": "AMZN",
-                      "berkshire hathaway": "BRK-B", "berkshire hathaway class b": "BRK-B",
-                      "3m": "MMM", "3m company": "MMM",
-                      "at&t": "T",
-                      "coca-cola": "KO", "the coca-cola company": "KO",
-                      "exxon mobil": "XOM", "exxonmobil": "XOM",
-                      "johnson & johnson": "JNJ", "j&j": "JNJ", # Add j&j
-                      "apple": "AAPL", "apple inc.": "AAPL",
-                      "microsoft": "MSFT", "microsoft corporation": "MSFT"
-                    }
-        ticker_map.update(overrides); logging.info(f"S%26P 500 map updated with overrides, size: {len(ticker_map)}.") # Corrected typo
+        # Expanded overrides for top 50 stocks and Apple
+        overrides = {
+            # Apple-specific mappings
+            "apple": "AAPL", "apple inc": "AAPL", "apple inc.": "AAPL",
+            # Top 50 stocks by market cap (approximated based on recent data)
+            "microsoft": "MSFT", "microsoft corporation": "MSFT",
+            "nvidia": "NVDA", "nvidia corporation": "NVDA",
+            "amazon": "AMZN", "amazon.com": "AMZN",
+            "meta": "META", "meta platforms": "META", "facebook": "META",
+            "alphabet": "GOOGL", "google": "GOOGL", "alphabet class c": "GOOG",
+            "tesla": "TSLA", "tesla inc": "TSLA",
+            "berkshire hathaway": "BRK-B", "berkshire hathaway inc": "BRK-B",
+            "jpmorgan chase": "JPM", "jpmorgan chase & co": "JPM",
+            "visa": "V", "visa inc": "V",
+            "walmart": "WMT", "walmart inc": "WMT",
+            "exxon mobil": "XOM", "exxon mobil corporation": "XOM",
+            "unitedhealth group": "UNH", "unitedhealth group incorporated": "UNH",
+            "mastercard": "MA", "mastercard incorporated": "MA",
+            "procter & gamble": "PG", "procter & gamble company": "PG",
+            "johnson & johnson": "JNJ",
+            "home depot": "HD", "home depot inc": "HD",
+            "costco wholesale": "COST", "costco wholesale corporation": "COST",
+            "abbvie": "ABBV", "abbvie inc": "ABBV",
+            "chevron": "CVX", "chevron corporation": "CVX",
+            "merck": "MRK", "merck & co inc": "MRK",
+            "coca-cola": "KO", "coca-cola company": "KO",
+            "pepsico": "PEP", "pepsico inc": "PEP",
+            "broadcom": "AVGO", "broadcom inc": "AVGO",
+            "thermo fisher scientific": "TMO", "thermo fisher scientific inc": "TMO",
+            "cisco systems": "CSCO", "cisco": "CSCO",
+            "accenture": "ACN", "accenture plc": "ACN",
+            "mcdonald's": "MCD", "mcdonald's corporation": "MCD",
+            "pfizer": "PFE", "pfizer inc": "PFE",
+            "salesforce": "CRM", "salesforce inc": "CRM",
+            "bank of america": "BAC", "bank of america corporation": "BAC",
+            "netflix": "NFLX", "netflix inc": "NFLX",
+            "adobe": "ADBE", "adobe inc": "ADBE",
+            "advanced micro devices": "AMD", "amd": "AMD",
+            "linde": "LIN", "linde plc": "LIN",
+            "qualcomm": "QCOM", "qualcomm incorporated": "QCOM",
+            "intel": "INTC", "intel corporation": "INTC",
+            "wells fargo": "WFC", "wells fargo & company": "WFC",
+            "oracle": "ORCL", "oracle corporation": "ORCL",
+            "applied materials": "AMAT", "applied materials inc": "AMAT",
+            "union pacific": "UNP", "union pacific corporation": "UNP",
+            "texas instruments": "TXN", "texas instruments incorporated": "TXN",
+            "at&t": "T", "at&t inc": "T",
+            "verizon communications": "VZ", "verizon": "VZ",
+            "morgan stanley": "MS", "morgan stanley": "MS",
+            "goldman sachs": "GS", "goldman sachs group inc": "GS",
+            "comcast": "CMCSA", "comcast corporation": "CMCSA",
+            "charles schwab": "SCHW", "charles schwab corporation": "SCHW",
+            "intuit": "INTU", "intuit inc": "INTU",
+            "amgen": "AMGN", "amgen inc": "AMGN",
+            "paypal": "PYPL", "paypal holdings": "PYPL"
+        }
+        ticker_map.update(overrides)
+        logging.info(f"S&P 500 map updated with {len(overrides)} overrides, total size: {len(ticker_map)}.")
         if not loaded_from_cache or force_refresh:
-            try: pd.to_pickle({'timestamp': time.time(), 'ticker_map': ticker_map}, cache_file); logging.info(f"Saved S%26P 500 map to cache.") # Corrected typo
-            except Exception as e: logging.warning(f"Warning: Could not write S%26P 500 cache: {e}") # Corrected typo
-    else: logging.error("ERROR: S%26P 500 Ticker map is None."); return None # Corrected typo
+            try:
+                pd.to_pickle({'timestamp': time.time(), 'ticker_map': ticker_map}, cache_file)
+                logging.info(f"Saved S&P 500 map to cache.")
+            except Exception as e:
+                logging.warning(f"Warning: Could not write S&P 500 cache: {e}")
+    else:
+        logging.error("ERROR: S&P 500 Ticker map is None.")
+        return None
     return ticker_map
+
+# ... (previous imports and code remain unchanged) ...
+
+def build_sp500_ticker_map(cache_duration_hours=24, force_refresh=False):
+    """Builds or loads a mapping of S&P 500 company names to tickers from Wikipedia."""
+    cache_file = "sp500_data.pkl"
+    ticker_map = None
+    loaded_from_cache = False
+    logging.info(f"Checking S&P 500 cache (file: {cache_file}, force_refresh={force_refresh}).")
+    if not force_refresh and os.path.exists(cache_file):
+        try:
+            cache_data = pd.read_pickle(cache_file)
+            last_fetch_time = cache_data.get('timestamp', 0)
+        except Exception as e:
+            logging.warning(f"S&P 500 cache read error: {e}.")
+            last_fetch_time = 0
+        if (time.time() - last_fetch_time) / 3600 < cache_duration_hours:
+            logging.info("Using cached S&P 500 data.")
+            ticker_map = cache_data.get('ticker_map')
+            loaded_from_cache = bool(ticker_map)
+        else:
+            logging.info("S&P 500 cache expired.")
+    if ticker_map is None:
+        logging.info("Fetching fresh S&P 500 data.")
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (compatible; FinancialBot/1.0; +http://example.com/bot)'}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            html_content = io.StringIO(response.text)
+            tables = pd.read_html(html_content, flavor='lxml')
+            sp500_table = tables[0]
+            ticker_col = 'Symbol'
+            name_col = 'Security'
+            scraped_ticker_map = {}
+            for _, row in sp500_table.iterrows():
+                ticker_val, name_val = row.get(ticker_col), row.get(name_col)
+                if isinstance(ticker_val, str) and isinstance(name_val, str) and ticker_val.strip() and name_val.strip():
+                    ticker_clean = ticker_val.strip().replace('.', '-')
+                    name_lower = name_val.strip().lower()
+                    name_cleaned = re.sub(r'\s+(inc|incorporated|corp|corporation|ltd|plc|co)\.?\b|\.$|,', '', name_lower, flags=re.IGNORECASE).strip()
+                    scraped_ticker_map[name_lower] = ticker_clean
+                    if name_cleaned != name_lower and name_cleaned not in scraped_ticker_map:
+                        scraped_ticker_map[name_cleaned] = ticker_clean
+            ticker_map = scraped_ticker_map
+            logging.info(f"Scraped {len(ticker_map)} S&P 500 entries.")
+        except Exception as e:
+            logging.error(f"Error fetching S&P 500 data: {e}")
+            return None
+    if ticker_map is not None:
+        # Expanded overrides for top 50 stocks and Apple
+        overrides = {
+            # Apple-specific mappings
+            "apple": "AAPL", "apple inc": "AAPL", "apple inc.": "AAPL",
+            # Top 50 stocks by market cap (approximated based on recent data)
+            "microsoft": "MSFT", "microsoft corporation": "MSFT",
+            "nvidia": "NVDA", "nvidia corporation": "NVDA",
+            "amazon": "AMZN", "amazon.com": "AMZN",
+            "meta": "META", "meta platforms": "META", "facebook": "META",
+            "alphabet": "GOOGL", "google": "GOOGL", "alphabet class c": "GOOG",
+            "tesla": "TSLA", "tesla inc": "TSLA",
+            "berkshire hathaway": "BRK-B", "berkshire hathaway inc": "BRK-B",
+            "jpmorgan chase": "JPM", "jpmorgan chase & co": "JPM",
+            "visa": "V", "visa inc": "V",
+            "walmart": "WMT", "walmart inc": "WMT",
+            "exxon mobil": "XOM", "exxon mobil corporation": "XOM",
+            "unitedhealth group": "UNH", "unitedhealth group incorporated": "UNH",
+            "mastercard": "MA", "mastercard incorporated": "MA",
+            "procter & gamble": "PG", "procter & gamble company": "PG",
+            "johnson & johnson": "JNJ",
+            "home depot": "HD", "home depot inc": "HD",
+            "costco wholesale": "COST", "costco wholesale corporation": "COST",
+            "abbvie": "ABBV", "abbvie inc": "ABBV",
+            "chevron": "CVX", "chevron corporation": "CVX",
+            "merck": "MRK", "merck & co inc": "MRK",
+            "coca-cola": "KO", "coca-cola company": "KO",
+            "pepsico": "PEP", "pepsico inc": "PEP",
+            "broadcom": "AVGO", "broadcom inc": "AVGO",
+            "thermo fisher scientific": "TMO", "thermo fisher scientific inc": "TMO",
+            "cisco systems": "CSCO", "cisco": "CSCO",
+            "accenture": "ACN", "accenture plc": "ACN",
+            "mcdonald's": "MCD", "mcdonald's corporation": "MCD",
+            "pfizer": "PFE", "pfizer inc": "PFE",
+            "salesforce": "CRM", "salesforce inc": "CRM",
+            "bank of america": "BAC", "bank of america corporation": "BAC",
+            "netflix": "NFLX", "netflix inc": "NFLX",
+            "adobe": "ADBE", "adobe inc": "ADBE",
+            "advanced micro devices": "AMD", "amd": "AMD",
+            "linde": "LIN", "linde plc": "LIN",
+            "qualcomm": "QCOM", "qualcomm incorporated": "QCOM",
+            "intel": "INTC", "intel corporation": "INTC",
+            "wells fargo": "WFC", "wells fargo & company": "WFC",
+            "oracle": "ORCL", "oracle corporation": "ORCL",
+            "applied materials": "AMAT", "applied materials inc": "AMAT",
+            "union pacific": "UNP", "union pacific corporation": "UNP",
+            "texas instruments": "TXN", "texas instruments incorporated": "TXN",
+            "at&t": "T", "at&t inc": "T",
+            "verizon communications": "VZ", "verizon": "VZ",
+            "morgan stanley": "MS", "morgan stanley": "MS",
+            "goldman sachs": "GS", "goldman sachs group inc": "GS",
+            "comcast": "CMCSA", "comcast corporation": "CMCSA",
+            "charles schwab": "SCHW", "charles schwab corporation": "SCHW",
+            "intuit": "INTU", "intuit inc": "INTU",
+            "amgen": "AMGN", "amgen inc": "AMGN",
+            "paypal": "PYPL", "paypal holdings": "PYPL"
+        }
+        ticker_map.update(overrides)
+        logging.info(f"S&P 500 map updated with {len(overrides)} overrides, total size: {len(ticker_map)}.")
+        if not loaded_from_cache or force_refresh:
+            try:
+                pd.to_pickle({'timestamp': time.time(), 'ticker_map': ticker_map}, cache_file)
+                logging.info(f"Saved S&P 500 map to cache.")
+            except Exception as e:
+                logging.warning(f"Warning: Could not write S&P 500 cache: {e}")
+    else:
+        logging.error("ERROR: S&P 500 Ticker map is None.")
+        return None
+    return ticker_map
+
+def build_nasdaq100_ticker_map(cache_duration_hours=24, force_refresh=False):
+    """Builds or loads a mapping of Nasdaq 100 company names to tickers from Wikipedia."""
+    cache_file = "nasdaq100_data.pkl"
+    ticker_map = None
+    loaded_from_cache = False
+    logging.info(f"Checking Nasdaq 100 cache (file: {cache_file}, force_refresh={force_refresh}).")
+    if not force_refresh and os.path.exists(cache_file):
+        try:
+            cache_data = pd.read_pickle(cache_file)
+            last_fetch_time = cache_data.get('timestamp', 0)
+        except Exception as e:
+            logging.warning(f"Nasdaq 100 cache read error: {e}.")
+            last_fetch_time = 0
+        if (time.time() - last_fetch_time) / 3600 < cache_duration_hours:
+            logging.info("Using cached Nasdaq 100 data.")
+            ticker_map = cache_data.get('ticker_map')
+            loaded_from_cache = bool(ticker_map)
+        else:
+            logging.info("Nasdaq 100 cache expired.")
+    if ticker_map is None:
+        logging.info("Fetching fresh Nasdaq 100 data.")
+        url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (compatible; FinancialBot/1.0; +http://example.com/bot)'}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            html_content = io.StringIO(response.text)
+            tables = pd.read_html(html_content, flavor='lxml')
+            found_table = False
+            for i, df in enumerate(tables):
+                cols_lower = {str(col).lower() for col in df.columns}
+                has_ticker = any(t in cols_lower for t in ['ticker symbol', 'ticker', 'symbol'])
+                has_name = any(n in cols_lower for n in ['company', 'security'])
+                if has_ticker and has_name and len(df) > 95 and len(df) < 110:
+                    nasdaq_table = df
+                    logging.info(f"Found Nasdaq 100 table at index {i}.")
+                    found_table = True
+                    break
+            if not found_table:
+                raise IndexError("Could not find Nasdaq 100 table with expected columns and row count.")
+            ticker_col, name_col = None, None
+            possible_ticker_cols = ['Ticker Symbol', 'Ticker', 'Symbol']
+            possible_name_cols = ['Company', 'Security']
+            for col in nasdaq_table.columns:
+                col_str = str(col)
+                if col_str in possible_ticker_cols and ticker_col is None:
+                    ticker_col = col_str
+                if col_str in possible_name_cols and name_col is None:
+                    name_col = col_str
+            if not ticker_col or not name_col:
+                logging.error(f"Could not find Nasdaq 100 columns (looked for {possible_ticker_cols} and {possible_name_cols}). Found: {nasdaq_table.columns.tolist()}")
+                return None
+            scraped_ticker_map = {}
+            for _, row in nasdaq_table.iterrows():
+                ticker_val, name_val = row.get(ticker_col), row.get(name_col)
+                if isinstance(ticker_val, str) and isinstance(name_val, str) and ticker_val.strip() and name_val.strip():
+                    ticker_clean = ticker_val.strip().replace('.', '-')
+                    name_lower = name_val.strip().lower()
+                    name_cleaned = re.sub(r'\s+(inc|incorporated|corp|corporation|ltd|plc|co)\.?\b|\.$|,', '', name_lower, flags=re.IGNORECASE).strip()
+                    scraped_ticker_map[name_lower] = ticker_clean
+                    if name_cleaned != name_lower and name_cleaned not in scraped_ticker_map:
+                        scraped_ticker_map[name_cleaned] = ticker_clean
+            ticker_map = scraped_ticker_map
+            logging.info(f"Scraped {len(ticker_map)} Nasdaq 100 entries.")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"FATAL: Error fetching Nasdaq 100 URL '{url}': {e}")
+            return None
+        except Exception as e:
+            logging.error(f"FATAL: Unexpected error during Nasdaq 100 fetch: {e}", exc_info=True)
+            return None
+    if ticker_map is not None:
+        # Expanded overrides for top 50 stocks and Apple
+        overrides = {
+            # Apple-specific mappings
+            "apple": "AAPL", "apple inc": "AAPL", "apple inc.": "AAPL",
+            # Top 50 stocks by market cap (approximated based on recent data)
+            "microsoft": "MSFT", "microsoft corporation": "MSFT",
+            "nvidia": "NVDA", "nvidia corporation": "NVDA",
+            "amazon": "AMZN", "amazon.com": "AMZN",
+            "meta": "META", "meta platforms": "META", "facebook": "META",
+            "alphabet": "GOOGL", "google": "GOOGL", "alphabet class c": "GOOG",
+            "tesla": "TSLA", "tesla inc": "TSLA",
+            "berkshire hathaway": "BRK-B", "berkshire hathaway inc": "BRK-B",
+            "jpmorgan chase": "JPM", "jpmorgan chase & co": "JPM",
+            "visa": "V", "visa inc": "V",
+            "walmart": "WMT", "walmart inc": "WMT",
+            "exxon mobil": "XOM", "exxon mobil corporation": "XOM",
+            "unitedhealth group": "UNH", "unitedhealth group incorporated": "UNH",
+            "mastercard": "MA", "mastercard incorporated": "MA",
+            "procter & gamble": "PG", "procter & gamble company": "PG",
+            "johnson & johnson": "JNJ",
+            "home depot": "HD", "home depot inc": "HD",
+            "costco wholesale": "COST", "costco wholesale corporation": "COST",
+            "abbvie": "ABBV", "abbvie inc": "ABBV",
+            "chevron": "CVX", "chevron corporation": "CVX",
+            "merck": "MRK", "merck & co inc": "MRK",
+            "coca-cola": "KO", "coca-cola company": "KO",
+            "pepsico": "PEP", "pepsico inc": "PEP",
+            "broadcom": "AVGO", "broadcom inc": "AVGO",
+            "thermo fisher scientific": "TMO", "thermo fisher scientific inc": "TMO",
+            "cisco systems": "CSCO", "cisco": "CSCO",
+            "accenture": "ACN", "accenture plc": "ACN",
+            "mcdonald's": "MCD", "mcdonald's corporation": "MCD",
+            "pfizer": "PFE", "pfizer inc": "PFE",
+            "salesforce": "CRM", "salesforce inc": "CRM",
+            "bank of america": "BAC", "bank of america corporation": "BAC",
+            "netflix": "NFLX", "netflix inc": "NFLX",
+            "adobe": "ADBE", "adobe inc": "ADBE",
+            "advanced micro devices": "AMD", "amd": "AMD",
+            "linde": "LIN", "linde plc": "LIN",
+            "qualcomm": "QCOM", "qualcomm incorporated": "QCOM",
+            "intel": "INTC", "intel corporation": "INTC",
+            "wells fargo": "WFC", "wells fargo & company": "WFC",
+            "oracle": "ORCL", "oracle corporation": "ORCL",
+            "applied materials": "AMAT", "applied materials inc": "AMAT",
+            "union pacific": "UNP", "union pacific corporation": "UNP",
+            "texas instruments": "TXN", "texas instruments incorporated": "TXN",
+            "at&t": "T", "at&t inc": "T",
+            "verizon communications": "VZ", "verizon": "VZ",
+            "morgan stanley": "MS", "morgan stanley": "MS",
+            "goldman sachs": "GS", "goldman sachs group inc": "GS",
+            "comcast": "CMCSA", "comcast corporation": "CMCSA",
+            "charles schwab": "SCHW", "charles schwab corporation": "SCHW",
+            "intuit": "INTU", "intuit inc": "INTU",
+            "amgen": "AMGN", "amgen inc": "AMGN",
+            "paypal": "PYPL", "paypal holdings": "PYPL"
+        }
+        ticker_map.update(overrides)
+        logging.info(f"Nasdaq 100 map updated with {len(overrides)} overrides, total size: {len(ticker_map)}.")
+        if not loaded_from_cache or force_refresh:
+            try:
+                pd.to_pickle({'timestamp': time.time(), 'ticker_map': ticker_map}, cache_file)
+                logging.info(f"Saved Nasdaq 100 map to cache.")
+            except Exception as e:
+                logging.warning(f"Warning: Could not write Nasdaq 100 cache: {e}")
+    else:
+        logging.error("ERROR: Nasdaq 100 Ticker map is None.")
+        return None
+    return ticker_map
+
+# ... (rest of the script remains unchanged) ...
+
+# ... (rest of the script remains unchanged) ...
 
 def build_nasdaq100_ticker_map(cache_duration_hours=24, force_refresh=False):
     """Builds or loads a mapping of Nasdaq 100 company names to tickers from Wikipedia."""
@@ -1865,10 +2169,10 @@ with st.sidebar:
     st.markdown("## Examples")
     # Updated MENU_OPTIONS - removed Scan Signals
     MENU_OPTIONS = {
-        "🔍 Stock Info": ["What's up with $TSLA?", "Tell me about Apple", "Info on Coca-Cola?", "$ESLT.TA details", "Microsoft data?", "3M Company info?"],
+        "🔍 Stock Info": ["What's up with $TSLA?", "$KO", "$TEVA", "MSFT data?", "3M Company info?"],
         "📊 TA Concepts": ["What is SMA?", "Explain Moving Averages?", "What is Support/Resistance?", "Candlesticks?", "What are technical indicators?"], # Kept TA concepts
-        "⚖️ Risk": ["What's the risk score for $AMD?", "Explain the risk score model", "How risky is $TQQQ?", "Risk for GOOG?"],
-        "📰 News Sentiment": ["News sentiment for $MSFT?", "Recent news sentiment for $NVDA?", "Sentiment analysis for META?"],
+        "⚖️ Risk": [" $AMD?", "Explain the risk score model", " $TQQQ?", " GOOG?"],
+        "📰 News Sentiment": ["News for $MSFT?", " News for $NVDA?", "News for for META?"],
         "📈 ETS Forecast": ["Forecast $AAPL price", "What's the ETS forecast for $MSFT?", "Price projection for $GOOG?"],
         "💼 Portfolio": ["How to diversify?", "Risks of single stocks?"],
         "📰 Market/General": ["Impact of interest rates?", "Inflation effect?", "What are ETFs?"],
@@ -1898,7 +2202,12 @@ for msg in st.session_state.messages:
 
 # --- Ticker Extraction ---
 # Added more common non-ticker words
-FORBIDDEN_TICKERS = {"TELL", "LOVE", "LIFE", "SOLO", "PLAY", "YOU", "REAL", "CASH", "WORK", "HOPE", "GOOD", "SAFE", "FAST", "COOK", "HUGE", "YOLO", "BOOM", "DUDE", "WISH", "ME", "ARE", "IS", "THE", "FOR", "AND", "NOW", "SEE", "CAN", "HAS", "WAS", "BUY", "SELL", "ALL", "ONE", "TWO", "BIG", "NEW", "OLD", "TOP", "LOW", "HIGH", "DATA", "FREE", "NEWS", "RISK", "CHART", "ETF", "FUND", "INDEX", "STOCK", "SHARES", "PRICE", "TRADE", "HOLD", "EXIT", "ENTRY"}
+FORBIDDEN_TICKERS = {"TELL", "LOVE", "LIFE", "SOLO", "PLAY", "YOU", "REAL", "CASH", "WORK", "HOPE", "GOOD", "SAFE", "FAST", "COOK", "HUGE", "YOLO", "BOOM", "DUDE", "WISH", "ME", "ARE", "IS", "THE", "FOR", "AND", "NOW", "SEE", "CAN", "HAS", "WAS", "BUY", "SELL", "ALL", "ONE", "TWO", "BIG", "NEW", "OLD", "TOP", "LOW", "HIGH", "DATA", "FREE", "NEWS", "RISK", "CHART", "ETF", "FUND", "INDEX", "STOCK", "SHARES", "PRICE", "TRADE", "HOLD", "EXIT", "ENTRY","WHAT","ABOUT","ME","SENTIMENT","RISK","surge", "plunge", "spike", "dip", "correction", "crash", "rally", "breakout", "reversal", "pullback", "capital", "liquidity", "float", "burn rate", "runway", "dry powder",
+ "trade", "order", "fill", "execution", "volume", "spread", "slippage", "scalping",
+ "bullish", "bearish", "FOMO", "HODL", "panic sell", "greed", "fear",
+ "investor", "trader", "market maker", "broker", "institutional investor",
+ "drawdown", "stop-loss", "risk/reward", "volatility", "leverage",
+ "earnings", "PE ratio", "support", "resistance", "RSI", "MACD", "candlestick", "volume profile"}
 def extract_tickers(text):
     """Extracts potential ticker symbols (prefixed with $) or standalone words that might be tickers."""
     # Find words that look like tickers, potentially prefixed with $
