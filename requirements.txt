@@ -5,7 +5,7 @@ polygon-api-client
 streamlit==1.45.0
 pandas==2.2.2
 yfinance==0.2.40
-openai==1.40.0
+openai
 praw==7.7.1
 vaderSentiment==3.3.2
 feedparser==6.0.11
